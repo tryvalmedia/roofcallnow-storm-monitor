@@ -1,9 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/api/storm-monitor",
-      "schedule": "0 * * * *"
-    }
-  ]
+  "version": 2
 }
-
