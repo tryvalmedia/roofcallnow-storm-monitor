@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/**/*.js", "use": "@vercel/node" }
+  ],
+  "crons": [
+    {
+      "path": "/api/storm-monitor",
+      "schedule": "0 * * * *"
+    }
+  ],
+  "env": {
+    "ALERT_EMAIL": "@alert-email",
+    "FROM_EMAIL": "@from-email",
+    "SENDGRID_API_KEY": "@sendgrid-api-key",
+    "GITHUB_TOKEN": "@github-token",
+    "GITHUB_REPO": "@github-repo"
+  }
+}
