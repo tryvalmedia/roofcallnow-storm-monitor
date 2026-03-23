@@ -39,12 +39,19 @@ module.exports = async function handler(req, res) {
       hailRes.text(), windRes.text(), tornRes.text()
     ]);
 
-    // NOAA CSV uses two-letter state codes e.g. "OH", "TX", "IN"
-    // Format: Time,Size,Location,County,State,Lat,Lon,Comments
-    // We check for ,OH, pattern (with commas) to avoid partial matches
-    const stateInHail = hailCsv.includes(`,${stateCode},`);
-    const stateInWind = windCsv.includes(`,${stateCode},`);
-    const stateInTorn = tornCsv.includes(`,${stateCode},`);
+    // NOAA CSV columns: Time, Speed/Size/FScale, Location, County, State, Lat, Lon, Comments
+    // State is at column index 4 — check each line individually for accuracy
+    function stateInCsv(csv, code) {
+      const lines = csv.split('\n').slice(1); // skip header
+      return lines.some(line => {
+        const cols = line.split(',');
+        return cols[4]?.trim().toUpperCase() === code.toUpperCase();
+      });
+    }
+
+    const stateInHail = stateInCsv(hailCsv, stateCode);
+    const stateInWind = stateInCsv(windCsv, stateCode);
+    const stateInTorn = stateInCsv(tornCsv, stateCode);
 
     // Debug mode — add ?debug=1 to see raw CSV snippet
     if (req.query.debug) {
