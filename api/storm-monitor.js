@@ -112,26 +112,142 @@ function groupByState(events) {
   return byState;
 }
 
-// ─── GENERATE STORM ALERT PAGE HTML ───────────────────────────────────────────
-function generateStormPage(stateName, stateCode, events) {
-  const hailEvents = events.filter(e => e.type === 'hail');
-  const windEvents = events.filter(e => e.type === 'wind');
-  const tornadoEvents = events.filter(e => e.type === 'tornado');
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+// ─── FETCH EXISTING PAGE DATA FROM GITHUB ─────────────────────────────────────
+async function fetchExistingPageData(filename) {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPO;
+  if (!token || !repo) return null;
 
-  const headline = tornadoEvents.length > 0
-    ? `Tornado Reported in ${stateName} — Check Your Roof Now`
-    : hailEvents.length > 0
-    ? `Hail Reported in ${stateName} — Get Your Roof Inspected`
-    : `Severe Wind Damage Reported in ${stateName}`;
+  try {
+    const apiUrl = `https://api.github.com/repos/${repo}/contents/${filename}`;
+    const res = await fetch(apiUrl, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Decode existing content and extract storm history JSON from it
+    const content = Buffer.from(data.content, 'base64').toString('utf8');
+    const match = content.match(/<!--STORM_HISTORY:(.*?)-->/s);
+    if (match) {
+      return JSON.parse(match[1]);
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ─── GENERATE STORM ALERT PAGE WITH ROLLING HISTORY ───────────────────────────
+function generateStormPage(stateName, stateCode, newEvents, existingHistory) {
+  const now = new Date();
+  const todayStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const nowISO = now.toISOString();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  // Build updated history — merge today's events with existing, drop entries older than 7 days
+  const todayEntry = {
+    date: todayStr,
+    dateISO: nowISO,
+    events: newEvents
+  };
+
+  let history = existingHistory ? existingHistory.entries || [] : [];
+
+  // Remove entries older than 7 days
+  history = history.filter(entry => new Date(entry.dateISO) > sevenDaysAgo);
+
+  // Remove today's entry if it exists (we'll replace with fresh data)
+  history = history.filter(entry => entry.date !== todayStr);
+
+  // Add today's entry at the front
+  history.unshift(todayEntry);
+
+  const historyData = { entries: history, lastUpdated: nowISO, state: stateCode, stateName };
+
+  // Determine active vs archive status
+  const mostRecentEntry = history[0];
+  const mostRecentDate = new Date(mostRecentEntry.dateISO);
+  const hoursSinceLastStorm = (now - mostRecentDate) / (1000 * 60 * 60);
+  const isActive = hoursSinceLastStorm < 24;
+
+  // Build headline based on most recent event types
+  const allNewEvents = newEvents;
+  const hailEvents = allNewEvents.filter(e => e.type === 'hail');
+  const tornadoEvents = allNewEvents.filter(e => e.type === 'tornado');
+
+  const headline = isActive
+    ? tornadoEvents.length > 0
+      ? `Tornado Reported in ${stateName} — Check Your Roof Now`
+      : hailEvents.length > 0
+      ? `Hail Reported in ${stateName} — Get Your Roof Inspected`
+      : `Severe Wind Damage Reported in ${stateName}`
+    : `Recent Storm Damage in ${stateName} — Get Your Roof Inspected`;
+
+  const alertBarText = isActive
+    ? `⚠️ ACTIVE STORM ALERT — ${stateName} — Roof damage may have occurred in your area`
+    : `📋 RECENT STORM ACTIVITY — ${stateName} — Storm damage reported in the last 7 days`;
+
+  const alertBarBg = isActive ? '#dc2626' : '#92400e';
+
+  const heroBg = isActive
+    ? 'linear-gradient(135deg,#1a0a0a 0%,#2d1515 60%,#1a0a0a 100%)'
+    : 'linear-gradient(135deg,#0f1f2e 0%,#1a3a52 60%,#0f2a3e 100%)';
+
+  const statusBadge = isActive
+    ? `<div class="storm-badge">🌩️ Active Storm Alert</div>`
+    : `<div class="storm-badge" style="background:rgba(146,64,14,0.2);border-color:rgba(146,64,14,0.5);color:#fcd34d;">📋 Recent Storm Activity</div>`;
+
+  const urgencyBoxContent = isActive
+    ? `<h3>Why You Need to Act Within 48 Hours</h3>
+       <p>Insurance claims for storm damage must typically be filed within 12 months — but the documentation window is now. A licensed inspector can identify damage, photograph it, and help you file a claim before evidence degrades. Most homeowner's insurance policies cover hail and wind damage with no out-of-pocket cost beyond your deductible.</p>`
+    : `<h3>Don't Wait — Storm Damage Gets Worse Over Time</h3>
+       <p>Even if the storm was a few days ago, roof damage from hail and wind can worsen quickly — especially with rain. Insurance claims are still valid for recent storms. A free inspection costs nothing and could save you thousands if damage is found.</p>`;
+
+  // Generate event cards for all history entries
+  const historyHTML = history.map((entry, idx) => {
+    const isToday = idx === 0 && isActive;
+    const entryHail = entry.events.filter(e => e.type === 'hail');
+    const entryWind = entry.events.filter(e => e.type === 'wind');
+    const entryTorn = entry.events.filter(e => e.type === 'tornado');
+
+    return `
+    <div style="margin-bottom:32px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <div style="background:${isToday ? 'rgba(220,38,38,0.2)' : 'rgba(201,146,42,0.15)'};
+          border:1px solid ${isToday ? 'rgba(220,38,38,0.4)' : 'rgba(201,146,42,0.3)'};
+          color:${isToday ? '#fca5a5' : '#e8b84b'};
+          padding:4px 12px;border-radius:100px;font-size:12px;font-weight:600;">
+          ${isToday ? '🔴 Today — ' : '📅 '}${entry.date}
+        </div>
+        <span style="font-size:12px;color:rgba(247,242,235,0.4);">
+          ${entry.events.length} event${entry.events.length !== 1 ? 's' : ''} reported
+        </span>
+      </div>
+      <div class="storm-grid">
+        ${entry.events.slice(0, 6).map(e => `
+        <div class="storm-card ${e.severity}">
+          <div class="storm-type ${e.type}">${e.type.toUpperCase()}</div>
+          <div class="storm-location">${e.location || 'Reported Location'}</div>
+          <div class="storm-detail">${e.description} · ${e.time || 'Today'}</div>
+        </div>`).join('')}
+        ${entry.events.length > 6 ? `<div class="storm-card" style="display:flex;align-items:center;justify-content:center;color:rgba(247,242,235,0.5);font-size:13px;">+${entry.events.length - 6} more events</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const totalEvents = history.reduce((sum, e) => sum + e.events.length, 0);
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Storm Damage Roofing Help — ${stateName} | RoofCallNow</title>
-<meta name="description" content="Storm damage reported in ${stateName} on ${today}. Get a free roof inspection from a licensed local contractor. Call (866) 466-9261 now.">
+<title>${isActive ? 'Active Storm Alert' : 'Recent Storm Damage'} — ${stateName} Roofing | RoofCallNow</title>
+<meta name="description" content="${isActive ? 'Active storm damage reported in' : 'Recent storm activity in'} ${stateName}. Get a free roof inspection from a licensed local contractor. Call (866) 466-9261.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
@@ -140,14 +256,14 @@ function generateStormPage(stateName, stateCode, events) {
   :root { --navy:#0f1f2e; --gold:#c9922a; --gold-light:#e8b84b; --cream:#f7f2eb; --rust:#b94a2c; --white:#fff; --gray:#6b7280; --red:#dc2626; }
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--navy); }
-  .alert-bar { background:var(--red); color:white; text-align:center; padding:12px 20px; font-size:14px; font-weight:600; letter-spacing:0.02em; animation:pulse 2s infinite; }
+  .alert-bar { background:${alertBarBg}; color:white; text-align:center; padding:12px 20px; font-size:14px; font-weight:600; ${isActive ? 'animation:pulse 2s infinite;' : ''} }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.85} }
-  .hero { background:linear-gradient(135deg,#1a0a0a 0%,#2d1515 60%,#1a0a0a 100%); padding:60px 40px; }
+  .hero { background:${heroBg}; padding:60px 40px; }
   .hero-inner { max-width:900px; margin:0 auto; }
   .storm-badge { display:inline-flex; align-items:center; gap:8px; background:rgba(220,38,38,0.2); border:1px solid rgba(220,38,38,0.5); color:#fca5a5; padding:6px 14px; border-radius:100px; font-size:13px; font-weight:600; margin-bottom:20px; }
-  .date-pill { display:inline-block; background:rgba(201,146,42,0.15); border:1px solid rgba(201,146,42,0.3); color:var(--gold-light); padding:5px 12px; border-radius:100px; font-size:12px; margin-bottom:16px; margin-left:10px; }
+  .last-updated { display:inline-block; background:rgba(201,146,42,0.15); border:1px solid rgba(201,146,42,0.3); color:var(--gold-light); padding:5px 12px; border-radius:100px; font-size:12px; margin-bottom:16px; margin-left:10px; }
   h1 { font-family:'Playfair Display',serif; font-size:clamp(28px,4vw,50px); font-weight:900; color:var(--white); line-height:1.1; margin-bottom:16px; }
-  h1 em { font-style:normal; color:#fca5a5; }
+  h1 em { font-style:normal; color:${isActive ? '#fca5a5' : 'var(--gold-light)'}; }
   .hero-sub { font-size:16px; color:rgba(247,242,235,0.75); line-height:1.7; margin-bottom:32px; max-width:600px; }
   .call-btn { display:inline-flex; align-items:center; gap:10px; background:linear-gradient(135deg,var(--gold),var(--gold-light)); color:var(--navy); padding:18px 36px; border-radius:12px; font-size:18px; font-weight:700; text-decoration:none; transition:transform 0.15s; }
   .call-btn:hover { transform:translateY(-2px); }
@@ -155,15 +271,15 @@ function generateStormPage(stateName, stateCode, events) {
   .section-label { font-size:11px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:var(--gold); margin-bottom:10px; }
   h2 { font-family:'Playfair Display',serif; font-size:28px; font-weight:900; color:var(--navy); margin-bottom:20px; }
   p { font-size:15px; line-height:1.8; color:#374151; margin-bottom:16px; }
-  .storm-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; margin:28px 0; }
-  .storm-card { background:white; border-radius:14px; border:1px solid #e9e4da; padding:20px; }
+  .storm-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; margin-bottom:8px; }
+  .storm-card { background:white; border-radius:14px; border:1px solid #e9e4da; padding:18px; }
   .storm-card.severe { border-color:#fca5a5; background:#fff5f5; }
   .storm-card.extreme { border-color:var(--red); background:#fff0f0; }
   .storm-type { font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px; }
   .storm-type.hail { color:var(--gold); }
   .storm-type.wind { color:#3b82f6; }
   .storm-type.tornado { color:var(--red); }
-  .storm-location { font-weight:700; font-size:16px; color:var(--navy); margin-bottom:4px; }
+  .storm-location { font-weight:700; font-size:15px; color:var(--navy); margin-bottom:4px; }
   .storm-detail { font-size:13px; color:var(--gray); }
   .urgency-box { background:var(--navy); border-radius:16px; padding:32px; margin:40px 0; text-align:center; }
   .urgency-box h3 { font-family:'Playfair Display',serif; font-size:24px; color:var(--white); margin-bottom:12px; }
@@ -173,47 +289,63 @@ function generateStormPage(stateName, stateCode, events) {
   .step-num { width:34px; height:34px; background:var(--navy); color:var(--gold-light); border-radius:10px; display:flex; align-items:center; justify-content:center; font-family:'Playfair Display',serif; font-size:17px; font-weight:900; margin-bottom:12px; }
   .step h4 { font-size:14px; font-weight:700; margin-bottom:6px; }
   .step p { font-size:13px; margin:0; }
-  .bottom-cta { background:linear-gradient(135deg,var(--red),#991b1b); padding:50px 40px; text-align:center; }
-  .bottom-cta h2 { font-family:'Playfair Display',serif; font-size:clamp(24px,3vw,38px); color:white; margin-bottom:10px; }
-  .bottom-cta p { color:rgba(255,255,255,0.75); margin-bottom:28px; }
+  .stats-strip { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin:32px 0; }
+  .stat-box { background:white; border-radius:12px; border:1px solid #e9e4da; padding:20px; text-align:center; }
+  .stat-num { font-family:'Playfair Display',serif; font-size:28px; font-weight:900; color:var(--navy); }
+  .stat-label { font-size:12px; color:var(--gray); margin-top:4px; }
+  .bottom-cta { background:${isActive ? 'linear-gradient(135deg,#dc2626,#991b1b)' : 'linear-gradient(135deg,var(--gold),var(--gold-light))'}; padding:50px 40px; text-align:center; }
+  .bottom-cta h2 { font-family:'Playfair Display',serif; font-size:clamp(24px,3vw,38px); color:${isActive ? 'white' : 'var(--navy)'}; margin-bottom:10px; }
+  .bottom-cta p { color:${isActive ? 'rgba(255,255,255,0.75)' : 'rgba(15,31,46,0.7)'}; margin-bottom:28px; }
   footer { background:var(--navy); padding:20px 40px; text-align:center; font-size:12px; color:rgba(247,242,235,0.35); }
   footer a { color:rgba(247,242,235,0.4); text-decoration:none; }
-  @media(max-width:768px) { .steps{grid-template-columns:1fr;} .content{padding:40px 24px;} .hero{padding:40px 24px;} }
+  @media(max-width:768px) { .steps{grid-template-columns:1fr;} .stats-strip{grid-template-columns:1fr 1fr;} .content{padding:40px 24px;} .hero{padding:40px 24px;} }
 </style>
 </head>
 <body>
 
-<div class="alert-bar">⚠️ ACTIVE STORM ALERT — ${stateName} — Roof damage may have occurred in your area</div>
+<!--STORM_HISTORY:${JSON.stringify(historyData)}-->
+
+<div class="alert-bar">${alertBarText}</div>
 
 <div class="hero">
   <div class="hero-inner">
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
-      <div class="storm-badge">🌩️ Storm Alert</div>
-      <div class="date-pill">${today}</div>
+      ${statusBadge}
+      <div class="last-updated">Last updated: ${todayStr} at ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}</div>
     </div>
     <h1>${headline.replace(stateName, `<em>${stateName}</em>`)}</h1>
-    <p class="hero-sub">NOAA storm reports show significant weather activity in ${stateName} today. Hail, high winds, and severe storms can cause serious roof damage that isn't visible from the ground — and waiting to inspect can turn a $500 repair into a $15,000 replacement.</p>
+    <p class="hero-sub">${isActive
+      ? `NOAA storm reports show significant weather activity in ${stateName} today. Hail, high winds, and severe storms can cause serious roof damage that isn\'t visible from the ground.`
+      : `Storm activity has been reported in ${stateName} over the past 7 days. Roof damage from recent storms may not be visible but can worsen quickly — especially with additional rain.`
+    }</p>
     <a href="tel:+18664669261" class="call-btn">📞 Call (866) 466-9261 — Free Inspection</a>
   </div>
 </div>
 
 <div class="content">
-  <div class="section-label">Today's Storm Reports — ${stateName}</div>
-  <h2>What Was Reported in ${stateName}</h2>
-  <p>The following storm events were recorded by NOAA's Storm Prediction Center in ${stateName} today. Each of these events is capable of causing significant roof damage.</p>
-
-  <div class="storm-grid">
-    ${events.slice(0, 12).map(e => `
-    <div class="storm-card ${e.severity}">
-      <div class="storm-type ${e.type}">${e.type.toUpperCase()}</div>
-      <div class="storm-location">${e.location || 'Reported Location'}</div>
-      <div class="storm-detail">${e.description} · ${e.time || 'Today'}</div>
-    </div>`).join('')}
+  <div class="stats-strip">
+    <div class="stat-box">
+      <div class="stat-num">${totalEvents}</div>
+      <div class="stat-label">Storm Events (7 days)</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num">${history.length}</div>
+      <div class="stat-label">Days With Activity</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num">${isActive ? 'Active' : 'Recent'}</div>
+      <div class="stat-label">Alert Status</div>
+    </div>
   </div>
 
+  <div class="section-label">Storm History — ${stateName} — Last 7 Days</div>
+  <h2>${isActive ? "Today's Storm Reports + Recent History" : "Recent Storm Activity"}</h2>
+  <p>The following storm events were recorded by NOAA's Storm Prediction Center in ${stateName}. Each of these events is capable of causing significant roof damage.</p>
+
+  ${historyHTML}
+
   <div class="urgency-box">
-    <h3>Why You Need to Act Within 48 Hours</h3>
-    <p>Insurance claims for storm damage must typically be filed within 12 months — but the documentation window is now. A licensed inspector can identify damage, photograph it, and help you file a claim before evidence degrades. Most homeowner's insurance policies cover hail and wind damage with no out-of-pocket cost beyond your deductible.</p>
+    ${urgencyBoxContent}
     <a href="tel:+18664669261" class="call-btn" style="display:inline-flex;">📞 Get a Free Inspection Now</a>
   </div>
 
@@ -222,14 +354,14 @@ function generateStormPage(stateName, stateCode, events) {
   <div class="steps">
     <div class="step"><div class="step-num">1</div><h4>Call Us Now</h4><p>Call (866) 466-9261 — we'll connect you with an available ${stateName} contractor immediately.</p></div>
     <div class="step"><div class="step-num">2</div><h4>Free Inspection</h4><p>A licensed contractor inspects your roof at no charge and documents any storm damage found.</p></div>
-    <div class="step"><div class="step-num">3</div><h4>Insurance Help</h4><p>Your contractor helps you understand your claim options. Most storm repairs cost you nothing out of pocket.</p></div>
+    <div class="step"><div class="step-num">3</div><h4>Insurance Help</h4><p>Your contractor helps you understand your claim options. Most storm repairs cost nothing out of pocket.</p></div>
   </div>
 </div>
 
 <div class="bottom-cta">
-  <h2>Don't Wait — Storm Damage Gets Worse</h2>
+  <h2>${isActive ? "Don't Wait — Storm Damage Gets Worse" : "Recent Storm? Get a Free Inspection"}</h2>
   <p>Free inspection · Licensed & insured contractors · No obligation</p>
-  <a href="tel:+18664669261" class="call-btn" style="background:white;color:var(--navy);">📞 Call (866) 466-9261</a>
+  <a href="tel:+18664669261" class="call-btn" style="background:${isActive ? 'white' : 'var(--navy)'};color:${isActive ? 'var(--navy)' : 'white'};">📞 Call (866) 466-9261</a>
 </div>
 
 <footer>
@@ -242,6 +374,71 @@ function generateStormPage(stateName, stateCode, events) {
 
 </body>
 </html>`;
+}
+
+// ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
+module.exports = async function handler(req, res) {
+  console.log('Storm monitor running:', new Date().toISOString());
+
+  try {
+    const [hailRes, windRes, tornRes] = await Promise.all([
+      fetch(NOAA_SOURCES.hail),
+      fetch(NOAA_SOURCES.wind),
+      fetch(NOAA_SOURCES.tornado)
+    ]);
+
+    const [hailCsv, windCsv, tornCsv] = await Promise.all([
+      hailRes.text(),
+      windRes.text(),
+      tornRes.text()
+    ]);
+
+    const allEvents = [
+      ...parseNoaaCSV(hailCsv, 'hail'),
+      ...parseNoaaCSV(windCsv, 'wind'),
+      ...parseNoaaCSV(tornCsv, 'tornado')
+    ];
+
+    console.log(`Found ${allEvents.length} qualifying storm events`);
+
+    if (allEvents.length === 0) {
+      return res.status(200).json({ message: 'No significant storms today', events: 0 });
+    }
+
+    const byState = groupByState(allEvents);
+    const affectedStates = Object.keys(byState);
+
+    console.log(`Affected states: ${affectedStates.join(', ')}`);
+
+    const pagesPushed = [];
+    for (const stateCode of affectedStates) {
+      const stateName = STATE_NAMES[stateCode] || stateCode;
+      const events = byState[stateCode];
+      const filename = `storm-alert-${stateCode.toLowerCase()}.html`;
+
+      // Fetch existing history for this state page
+      const existingHistory = await fetchExistingPageData(filename);
+
+      // Generate page with rolling history
+      const html = generateStormPage(stateName, stateCode, events, existingHistory);
+      await pushToGitHub(filename, html);
+      pagesPushed.push(filename);
+    }
+
+    await sendEmailAlert(byState);
+
+    return res.status(200).json({
+      success: true,
+      eventsFound: allEvents.length,
+      statesAffected: affectedStates.length,
+      pagesPushed,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (err) {
+    console.error('Storm monitor error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 // ─── SEND EMAIL ALERT VIA SENDGRID ────────────────────────────────────────────
@@ -369,71 +566,5 @@ async function pushToGitHub(filename, content) {
   } catch (e) {
     console.log(`❌ Push exception for ${filename}: ${e.message}`);
     return { error: e.message };
-  }
-}
-
-// ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
-module.exports = async function handler(req, res) {
-  // Allow manual trigger via GET, or automatic via cron
-  console.log('Storm monitor running:', new Date().toISOString());
-
-  try {
-    // Fetch all storm data from NOAA in parallel
-    const [hailRes, windRes, tornRes] = await Promise.all([
-      fetch(NOAA_SOURCES.hail),
-      fetch(NOAA_SOURCES.wind),
-      fetch(NOAA_SOURCES.tornado)
-    ]);
-
-    const [hailCsv, windCsv, tornCsv] = await Promise.all([
-      hailRes.text(),
-      windRes.text(),
-      tornRes.text()
-    ]);
-
-    // Parse all events
-    const allEvents = [
-      ...parseNoaaCSV(hailCsv, 'hail'),
-      ...parseNoaaCSV(windCsv, 'wind'),
-      ...parseNoaaCSV(tornCsv, 'tornado')
-    ];
-
-    console.log(`Found ${allEvents.length} qualifying storm events`);
-
-    if (allEvents.length === 0) {
-      return res.status(200).json({ message: 'No significant storms today', events: 0 });
-    }
-
-    // Group by state
-    const byState = groupByState(allEvents);
-    const affectedStates = Object.keys(byState);
-
-    console.log(`Affected states: ${affectedStates.join(', ')}`);
-
-    // Generate and push a storm alert page for each affected state
-    const pagesPushed = [];
-    for (const stateCode of affectedStates) {
-      const stateName = STATE_NAMES[stateCode] || stateCode;
-      const events = byState[stateCode];
-      const filename = `storm-alert-${stateCode.toLowerCase()}.html`;
-      const html = generateStormPage(stateName, stateCode, events);
-      await pushToGitHub(filename, html);
-      pagesPushed.push(filename);
-    }
-
-    // Send email alert
-    await sendEmailAlert(byState);
-
-    return res.status(200).json({
-      success: true,
-      eventsFound: allEvents.length,
-      statesAffected: affectedStates.length,
-      pagesPushed,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (err) {
-    console.error('Storm monitor error:', err);
-    return res.status(500).json({ error: err.message });
   }
 }
