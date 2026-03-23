@@ -56,41 +56,41 @@ function parseNoaaCSV(csv, type) {
           events.push({
             type: 'hail',
             time: cols[0]?.trim(),
-            state: cols[3]?.trim(),
-            location: cols[4]?.trim(),
+            state: cols[4]?.trim(),
+            location: cols[2]?.trim(),
             size: size,
             description: `${size}" hail`,
             severity: size >= 2.0 ? 'extreme' : size >= 1.0 ? 'severe' : 'moderate',
-            lat: parseFloat(cols[6]) || null,
-            lon: parseFloat(cols[7]) || null
+            lat: parseFloat(cols[5]) || null,
+            lon: parseFloat(cols[6]) || null
           });
         }
       } else if (type === 'wind') {
-        const speed = parseInt(cols[5]) || 0;
+        const speed = parseInt(cols[1]) || 0;
         if (speed >= CONFIG.minWindSpeed) {
           events.push({
             type: 'wind',
             time: cols[0]?.trim(),
-            state: cols[3]?.trim(),
-            location: cols[4]?.trim(),
+            state: cols[4]?.trim(),
+            location: cols[2]?.trim(),
             speed: speed,
             description: `${speed} mph winds`,
             severity: speed >= 75 ? 'extreme' : speed >= 65 ? 'severe' : 'moderate',
-            lat: parseFloat(cols[6]) || null,
-            lon: parseFloat(cols[7]) || null
+            lat: parseFloat(cols[5]) || null,
+            lon: parseFloat(cols[6]) || null
           });
         }
       } else if (type === 'tornado') {
         events.push({
           type: 'tornado',
           time: cols[0]?.trim(),
-          state: cols[3]?.trim(),
-          location: cols[4]?.trim(),
-          fscale: cols[5]?.trim(),
-          description: `${cols[5]?.trim() || 'EF?'} tornado`,
+          state: cols[4]?.trim(),
+          location: cols[2]?.trim(),
+          fscale: cols[1]?.trim(),
+          description: `${cols[1]?.trim() || 'EF?'} tornado`,
           severity: 'extreme',
-          lat: parseFloat(cols[6]) || null,
-          lon: parseFloat(cols[7]) || null
+          lat: parseFloat(cols[5]) || null,
+          lon: parseFloat(cols[6]) || null
         });
       }
     } catch (e) {
@@ -415,5 +415,3 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
-
-
