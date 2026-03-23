@@ -209,7 +209,7 @@ function generateStormPage(stateName, stateCode, newEvents, existingHistory) {
 
   // Generate event cards for all history entries
   const historyHTML = history.map((entry, idx) => {
-    const isToday = idx === 0 && isActive;
+    const isToday = idx === 0 && isActive && entry.date === todayStr;
     const entryHail = entry.events.filter(e => e.type === 'hail');
     const entryWind = entry.events.filter(e => e.type === 'wind');
     const entryTorn = entry.events.filter(e => e.type === 'tornado');
