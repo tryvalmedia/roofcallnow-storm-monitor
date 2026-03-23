@@ -39,10 +39,24 @@ module.exports = async function handler(req, res) {
       hailRes.text(), windRes.text(), tornRes.text()
     ]);
 
-    // NOAA CSV uses full state names in ALL CAPS e.g. "OHIO", "COLORADO"
-    const stateInHail = hailCsv.toUpperCase().includes(`,${stateFullName},`);
-    const stateInWind = windCsv.toUpperCase().includes(`,${stateFullName},`);
-    const stateInTorn = tornCsv.toUpperCase().includes(`,${stateFullName},`);
+    // NOAA CSV uses two-letter state codes e.g. "OH", "TX", "IN"
+    // Format: Time,Size,Location,County,State,Lat,Lon,Comments
+    // We check for ,OH, pattern (with commas) to avoid partial matches
+    const stateInHail = hailCsv.includes(`,${stateCode},`);
+    const stateInWind = windCsv.includes(`,${stateCode},`);
+    const stateInTorn = tornCsv.includes(`,${stateCode},`);
+
+    // Debug mode — add ?debug=1 to see raw CSV snippet
+    if (req.query.debug) {
+      return res.status(200).json({
+        stateCode,
+        hailSnippet: hailCsv.substring(0, 500),
+        windSnippet: windCsv.substring(0, 500),
+        stateInHail,
+        stateInWind,
+        stateInTorn
+      });
+    }
 
     if (!stateInHail && !stateInWind && !stateInTorn) {
       return res.status(200).json({ alert: null });
