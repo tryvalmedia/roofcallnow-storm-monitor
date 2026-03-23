@@ -113,7 +113,7 @@ function regeneratePage(historyData) {
        <p>Even if the storm was a few days ago, roof damage from hail and wind can worsen quickly — especially with rain. Insurance claims are still valid for recent storms. A free inspection costs nothing and could save you thousands.</p>`;
 
   const historyHTML = validEntries.map((entry, idx) => {
-    const isToday = idx === 0 && isActive;
+    const isToday = idx === 0 && isActive && entry.date === now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
     return `
     <div style="margin-bottom:32px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
