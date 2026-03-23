@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "description": "Storm monitoring and alert system for RoofCallNow",
   "engines": {
-    "node": "18.x"
+    "node": "24.x"
   }
 }
