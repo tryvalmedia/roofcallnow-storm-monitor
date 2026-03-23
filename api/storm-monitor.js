@@ -311,25 +311,34 @@ async function sendEmailAlert(stormSummary) {
 // Pushes generated storm pages directly to your GitHub repo
 async function pushToGitHub(filename, content) {
   const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO; // format: "username/reponame"
+  const repo = process.env.GITHUB_REPO;
   if (!token || !repo) {
     console.log('GitHub not configured — skipping page push');
-    return;
+    return { error: 'not configured' };
   }
 
+  console.log(`Pushing ${filename} to ${repo}...`);
   const apiUrl = `https://api.github.com/repos/${repo}/contents/${filename}`;
 
   // Check if file exists to get SHA for update
   let sha;
   try {
     const check = await fetch(apiUrl, {
-      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
     });
+    console.log(`SHA check status: ${check.status}`);
     if (check.ok) {
       const data = await check.json();
       sha = data.sha;
+      console.log(`File exists, SHA: ${sha}`);
     }
-  } catch (e) {}
+  } catch (e) {
+    console.log(`SHA check error: ${e.message}`);
+  }
 
   const body = {
     message: `Storm alert: ${filename} — ${new Date().toISOString()}`,
@@ -337,17 +346,30 @@ async function pushToGitHub(filename, content) {
     ...(sha ? { sha } : {})
   };
 
-  await fetch(apiUrl, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/vnd.github+json',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
-  });
+  try {
+    const pushRes = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
 
-  console.log(`Pushed ${filename} to GitHub`);
+    const pushData = await pushRes.json();
+    if (pushRes.ok) {
+      console.log(`✅ Successfully pushed ${filename}`);
+      return { success: true };
+    } else {
+      console.log(`❌ Push failed for ${filename}: ${pushRes.status} — ${JSON.stringify(pushData)}`);
+      return { error: pushData.message };
+    }
+  } catch (e) {
+    console.log(`❌ Push exception for ${filename}: ${e.message}`);
+    return { error: e.message };
+  }
 }
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
