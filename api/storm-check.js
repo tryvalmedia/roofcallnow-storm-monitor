@@ -2,6 +2,20 @@
 // Called by the landing page on load
 // Returns active storm alert for visitor's state if one exists
 
+// Map state codes to full names as NOAA uses them in CSV (ALL CAPS)
+const STATE_FULL_NAMES = {
+  AL:'ALABAMA', AK:'ALASKA', AZ:'ARIZONA', AR:'ARKANSAS', CA:'CALIFORNIA',
+  CO:'COLORADO', CT:'CONNECTICUT', DE:'DELAWARE', FL:'FLORIDA', GA:'GEORGIA',
+  HI:'HAWAII', ID:'IDAHO', IL:'ILLINOIS', IN:'INDIANA', IA:'IOWA', KS:'KANSAS',
+  KY:'KENTUCKY', LA:'LOUISIANA', ME:'MAINE', MD:'MARYLAND', MA:'MASSACHUSETTS',
+  MI:'MICHIGAN', MN:'MINNESOTA', MS:'MISSISSIPPI', MO:'MISSOURI', MT:'MONTANA',
+  NE:'NEBRASKA', NV:'NEVADA', NH:'NEW HAMPSHIRE', NJ:'NEW JERSEY', NM:'NEW MEXICO',
+  NY:'NEW YORK', NC:'NORTH CAROLINA', ND:'NORTH DAKOTA', OH:'OHIO', OK:'OKLAHOMA',
+  OR:'OREGON', PA:'PENNSYLVANIA', RI:'RHODE ISLAND', SC:'SOUTH CAROLINA',
+  SD:'SOUTH DAKOTA', TN:'TENNESSEE', TX:'TEXAS', UT:'UTAH', VT:'VERMONT',
+  VA:'VIRGINIA', WA:'WASHINGTON', WV:'WEST VIRGINIA', WI:'WISCONSIN', WY:'WYOMING'
+};
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 's-maxage=3600'); // Cache for 1 hour
@@ -10,6 +24,8 @@ module.exports = async function handler(req, res) {
   if (!state) return res.status(200).json({ alert: null });
 
   const stateCode = state.toUpperCase();
+  const stateFullName = STATE_FULL_NAMES[stateCode];
+  if (!stateFullName) return res.status(200).json({ alert: null });
 
   // Check NOAA for today's storms in this state
   try {
@@ -23,10 +39,10 @@ module.exports = async function handler(req, res) {
       hailRes.text(), windRes.text(), tornRes.text()
     ]);
 
-    // Quick check — does this state appear in any report?
-    const stateInHail = hailCsv.includes(`,${stateCode},`);
-    const stateInWind = windCsv.includes(`,${stateCode},`);
-    const stateInTorn = tornCsv.includes(`,${stateCode},`);
+    // NOAA CSV uses full state names in ALL CAPS e.g. "OHIO", "COLORADO"
+    const stateInHail = hailCsv.toUpperCase().includes(`,${stateFullName},`);
+    const stateInWind = windCsv.toUpperCase().includes(`,${stateFullName},`);
+    const stateInTorn = tornCsv.toUpperCase().includes(`,${stateFullName},`);
 
     if (!stateInHail && !stateInWind && !stateInTorn) {
       return res.status(200).json({ alert: null });
@@ -56,5 +72,3 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ alert: null });
   }
 }
-
-
